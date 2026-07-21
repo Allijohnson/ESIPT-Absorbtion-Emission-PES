@@ -1,0 +1,105 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16G
+#SBATCH --job-name=06-MN-gs-neq-clr-ESIPT
+
+set -e
+
+sif_file=${SIF_FILES}/g16_centos-7-6.sif
+local_scratch=/scratch/$USER/$SLURM_JOBID
+mkdir -p $local_scratch
+storage_path=${SLURM_SUBMIT_DIR:-$(pwd)}
+
+export BASEFILE=$SLURM_JOB_NAME.$SLURM_JOBID
+storage_path=$SLURM_SUBMIT_DIR
+
+echo "BASEFILE: $BASEFILE"
+echo "storage_path: $storage_path"
+
+cleanup() {
+    echo "Job caught exit signal. Cleaning up split temporary rwf files on \$(hostname)..."
+    rm -rf $local_scratch
+}
+trap cleanup EXIT INT TERM ERR
+
+if [ ! -f $storage_path/05-MN-ESIPT.chk ]; then
+  echo "ERROR: 05-MN-ESIPT.chk not found — did step 5 complete successfully?"
+  exit 1
+fi
+
+cd $storage_path
+
+cat <<@EOF >$BASEFILE.sh
+#!/bin/bash
+export GAUSS_SCRDIR=$local_scratch
+cd $storage_path
+echo "Running ground state non-eq solvation at excited state geometry (CLR)..."
+g16 <$BASEFILE.in >$BASEFILE.out 2>$BASEFILE.err
+echo "g16 code: \$?"
+@EOF
+
+chmod +x $BASEFILE.sh
+
+cat <<"@EOF" >$BASEFILE.in
+%oldchk=05-MN-ESIPT.chk
+%chk=06-MN-ESIPT.chk
+%nprocshared=16
+%mem=14GB
+# CAM-B3LYP/6-31+G(d,p) SCRF=(Solvent=isolve,NonEquilibrium=Read)
+  Geom=Check Guess=Read NoSymm
+
+MN ESIPT: ground state non-equilibrium solvation
+at excited state geometry (CLR path)
+
+0 1
+
+@EOF
+                         
+echo "Input file written, starting Singularity..."
+echo "Watch progress with: tail -f $storage_path/$BASEFILE.out"
+singularity run -B $SLURM_SUBMIT_DIR,$local_scratch $sif_file ./$BASEFILE.sh
+
+echo "Job complete. Running extraction..."
+
+# Python segment to process Gaussian output and extract SCF energies and Frequencies
+python3 - <<'EOF'
+import os
+
+basefile = os.environ.get('BASEFILE', '06-MN-gs-neq-clr-ESIPT')
+logfile = basefile + ".out"
+summary_file = "MN-isolve-energy-summary.txt"
+
+scf_energy = None
+
+if os.path.exists(logfile):
+    with open(logfile, 'r') as f:
+        for line in f:
+            if "SCF Done:" in line:
+                try:
+                    # Robust split implementation that bypasses formatting spacing issues
+                    scf_energy = float(line.split('=')[1].split()[0])
+                except (IndexError, ValueError):
+                    pass
+
+    if scf_energy is not None:
+        energy_ev = scf_energy * 27.211386
+        
+        with open(summary_file, 'a') as out:
+            out.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+            out.write("Step 6a: Ground State Non-Eq Solvation\n")
+            out.write("Job Name: " + str(basefile) + "\n")
+            out.write("Solvent:  isolve (Non-equilibrium)\n")
+            out.write("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+            out.write("Summary of MN ESIPT in isolve\n")
+            out.write("Ground State Energy (Hartree): " + "{:.6f}".format(scf_energy) + "\n")
+            out.write("Ground State Energy (eV):      " + "{:.4f}".format(energy_ev) + "\n")
+            
+        print("Success! Step 6 data appended to " + summary_file)
+    else:
+        print("Error: Could not find 'SCF Done:' in the Gaussian output file.")
+else:
+    print("Error: Output file " + logfile + " not found.")
+EOF
+

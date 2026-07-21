@@ -1,0 +1,153 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=14
+#SBATCH --mem=16G
+#SBATCH --job-name=02b-MN-ESIPT-scan-conform
+
+set -e
+
+sif_file=${SIF_FILES}/g16_centos-7-6.sif
+local_scratch=/scratch/$USER/$SLURM_JOBID
+mkdir -p $local_scratch
+storage_path=${SLURM_SUBMIT_DIR:-$(pwd)}
+
+export BASEFILE=$SLURM_JOB_NAME.$SLURM_JOBID
+storage_path=$SLURM_SUBMIT_DIR
+
+echo "BASEFILE: $BASEFILE"
+echo "storage_path: $storage_path"
+
+cleanup() {
+    echo "Job caught exit signal. Cleaning up split temporary rwf files on $(hostname)..."
+    rm -rf $local_scratch
+}
+trap cleanup EXIT INT TERM ERR
+
+# Requires S1-NF optimized geometry from step 02
+if [ ! -f $storage_path/02-MN-conform.chk ]; then
+  echo "ERROR: 02-MN-conform.chk not found - did step 02 (S1-NF opt) complete successfully?"
+  exit 1
+fi
+
+cd $storage_path
+
+cat <<@EOF >$BASEFILE.sh
+#!/bin/bash
+export GAUSS_SCRDIR=$local_scratch
+cd $storage_path
+echo "Running gas phase S1 ESIPT relaxed PES scan..."
+g16 <$BASEFILE.in >$BASEFILE.out 2>$BASEFILE.err
+echo "g16 exit code: \$?"
+@EOF
+
+chmod +x $BASEFILE.sh
+
+cat <<"@EOF" >$BASEFILE.in
+%oldchk=02-MN-conform.chk
+%chk=02b-MN-ESIPT-scan-conform.chk
+%nprocshared=14
+%mem=14GB
+# CAM-B3LYP/6-31+G(d,p) TD=(NStates=5,Root=1)
+  Geom=Check Guess=Read Opt=(ModRedundant,MaxCycles=100) NoSymm
+
+MN gas phase: S1 ESIPT relaxed PES scan O-H bond
+Scanning O(HAG)-H(HOI) to locate proton transfer on S1 surface
+Check for root flipping in output — watch oscillator strengths at each step
+
+0 1
+
+B HAG HOI S 15 -0.08
+
+@EOF
+
+echo "Input file written, starting Singularity..."
+echo "Watch progress with: tail -f $storage_path/$BASEFILE.out"
+singularity run -B $SLURM_SUBMIT_DIR,$local_scratch $sif_file ./$BASEFILE.sh
+
+echo "Job complete. Running extraction..."
+
+# Python segment to extract scan energies at each step
+python3 - <<'EOF'
+import os, re
+
+basefile     = os.environ.get('BASEFILE', '02b-MN-ESIPT-scan-conform')
+logfile      = basefile + ".out"
+summary_file = "MN-conform-gas-energy-summary.txt"
+
+# ── regex patterns matching actual Gaussian output ────────────────────────
+energy_re  = re.compile(r"Total Energy, E\(TD-HF/TD-DFT\)\s*=\s*([-\d.]+)")
+s1_re      = re.compile(r"Excited State\s+1:.*?([\d.]+) eV\s+([\d.]+) nm.*?f=([\d.]+)")
+opt_head   = re.compile(r"Optimized Parameters")
+coord_re   = re.compile(r"!\s+\w+\s+R\(HAG,HOI\)\s+([\d.]+)")   # or R(27,19)
+coord_re2  = re.compile(r"!\s+\w+\s+R\(HOI,HAG\)\s+([\d.]+)")
+
+scan_energies = []
+excited_states = []
+bond_lengths   = []
+
+last_energy  = None
+last_s1      = None
+in_opt_block = False
+
+if not os.path.exists(logfile):
+    print(f"ERROR: {logfile} not found.")
+    exit(1)
+
+with open(logfile) as f:
+    for line in f:
+        # Rolling TD energy
+        m = energy_re.search(line)
+        if m:
+            last_energy = float(m.group(1))
+            continue
+
+        # Rolling S1 state
+        m = s1_re.search(line)
+        if m:
+            last_s1 = (float(m.group(1)), float(m.group(2)), float(m.group(3)))
+            continue
+
+        # Optimized Parameters block = one converged scan point
+        if opt_head.search(line):
+            in_opt_block = True
+            continue
+
+        if in_opt_block:
+            m = coord_re.search(line) or coord_re2.search(line)
+            if m and last_energy is not None:
+                bond_lengths.append(float(m.group(1)))
+                scan_energies.append(last_energy)
+                excited_states.append(last_s1)
+                last_energy  = None
+                last_s1      = None
+                in_opt_block = False
+                continue
+            if line.strip() == "":
+                in_opt_block = False
+
+with open(summary_file, 'a') as out:
+    out.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+    out.write("Step 02b: Gas Phase S1 ESIPT PES Scan\n")
+    out.write(f"Job Name: {basefile}\n")
+    out.write("Scanned coordinate: O(HAG)-H(HOI), n steps x -0.06 Ang\n")
+    out.write("Depending on Scan Submit Step 2c if ESIPT favorable\n")
+    out.write("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+    out.write("\n--- Scan Energies (TD-DFT total, a.u.) ---\n")
+
+    if scan_energies:
+        e0 = scan_energies[0]
+        for idx, (e, bl) in enumerate(zip(scan_energies, bond_lengths)):
+            rel = (e - e0) * 627.509
+            s1  = f"{excited_states[idx][0]:.4f} eV / {excited_states[idx][1]:.2f} nm  f={excited_states[idx][2]:.4f}" \
+                  if excited_states[idx] else "N/A"
+            out.write(f"  Step {idx+1:2d}  O-H = {bl:.5f} A"
+                      f"  E = {e:.8f} a.u.  ({rel:+.2f} kcal/mol)  S1: {s1}\n")
+    else:
+        out.write("  No converged scan points found — check convergence.\n")
+
+    out.write("\n--- Root Flipping Check ---\n")
+    out.write("Watch for sudden changes in f= or state character above.\n")
+
+print(f"Summary written to {summary_file}")
+EOF

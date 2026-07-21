@@ -1,0 +1,148 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=10
+#SBATCH --mem=16G
+#SBATCH --job-name=04b-Diimide-S1PT-emit-HH
+
+set -e
+
+sif_file=${SIF_FILES}/g16_centos-7-6.sif
+
+local_scratch=/scratch/$USER/$SLURM_JOBID
+mkdir -p $local_scratch
+storage_path=${SLURM_SUBMIT_DIR:-$(pwd)}
+
+export BASEFILE=$SLURM_JOB_NAME.$SLURM_JOBID
+storage_path=$SLURM_SUBMIT_DIR
+
+echo "BASEFILE: $BASEFILE"
+echo "storage_path: $storage_path"
+
+cleanup() {
+    echo "Job caught exit signal. Cleaning up split temporary rwf files on $(hostname)..."
+    rm -rf $local_scratch
+}
+trap cleanup EXIT INT TERM ERR
+
+
+# Requires confirmed S1-PT minimum from step 02c
+if [ ! -f $storage_path/02c-Diimide-HH-S1PT-opt.chk ]; then
+  echo "ERROR: 02c-Diimide-HH-S1PT-opt.chk not found - did step 02c (S1-PT opt+freq) complete successfully?"
+  exit 1
+fi
+
+cd $storage_path
+
+cat <<@EOF >$BASEFILE.sh
+#!/bin/bash
+export GAUSS_SCRDIR=$scratch_path
+cd $storage_path
+echo "Running S1-PT vertical emission single point..."
+g16 <$BASEFILE.in >$BASEFILE.out 2>$BASEFILE.err
+echo "g16 exit code: \$?"
+@EOF
+
+chmod +x $BASEFILE.sh
+
+cat <<"@EOF" >$BASEFILE.in
+%oldchk=02c-Diimide-HH-S1PT-opt.chk
+%chk=04b-Diimide-HH-S1PT-emit.chk
+%nprocshared=10
+%mem=14GB
+# CAM-B3LYP/6-31+G(d,p) TD=(NStates=5,Root=1)
+  Geom=Check Guess=Read NoSymm
+
+Diimide HH gas phase: S1-PT vertical emission single point
+At confirmed S1-PT minimum geometry (from 02c)
+Vertical emission = S1-PT -> S0-PT (Keto form)
+This is the ESIPT tautomer emission wavelength
+Compare with 04-Diimide NF emission for full Stokes shift
+
+0 1
+@EOF
+
+echo "Input file written, starting Singularity..."
+echo "Watch progress with: tail -f $scratch_path/$BASEFILE.out"
+singularity run -B $SLURM_SUBMIT_DIR,$local_scratch $sif_file ./$BASEFILE.sh
+
+echo "Job complete. Running extraction..."
+
+python3 - <<'EOF'
+import os
+
+basefile     = os.environ.get('BASEFILE')
+logfile      = basefile + ".out"
+summary_file = "MN-conform-gas-energy-summary.txt"
+
+emission_ev   = None
+wavelength_nm = None
+osc_strength  = None
+total_energy  = None
+scf_energy    = None
+
+if os.path.exists(logfile):
+    with open(logfile, 'r') as f:
+        for line in f:
+            if "Total Energy, E(TD-HF/TD-DFT)" in line:
+                try:
+                    total_energy = float(line.split("=")[1].strip().split()[0])
+                except (IndexError, ValueError):
+                    pass
+
+            if "SCF Done" in line:
+                try:
+                    scf_energy = float(line.split("=")[1].strip().split()[0])
+                except (IndexError, ValueError):
+                    pass
+
+            if "Excited State   1:" in line:
+                try:
+                    parts         = line.split()
+                    emission_ev   = float(parts[4])
+                    wavelength_nm = float(parts[6])
+                    for part in parts:
+                        if part.startswith("f="):
+                            osc_strength = float(part.split("=")[1])
+                except (IndexError, ValueError):
+                    pass
+
+    with open(summary_file, 'a') as out:
+        out.write("\n=========================================\n")
+        out.write("Step 04b: S1-PT Vertical Emission (ESIPT Tautomer)\n")
+        out.write("Job Name: " + str(basefile) + "\n")
+        out.write("Geometry: S1-PT confirmed minimum (from 02c)\n")
+        out.write("-----------------------------------------\n")
+
+        if emission_ev is not None:
+            out.write("PT Emission Energy (eV):         {:.4f} eV\n".format(emission_ev))
+            out.write("PT Emission Wavelength (nm):     {:.2f} nm\n".format(wavelength_nm))
+            if osc_strength is not None:
+                out.write("Oscillator Strength (f):         {:.4f}\n".format(osc_strength))
+        else:
+            out.write("Emission data not found — check convergence.\n")
+
+        if total_energy is not None:
+            out.write("S1-PT Total Energy (a.u.):       {:.6f}\n".format(total_energy))
+        if scf_energy is not None:
+            out.write("S0-PT SCF Energy (a.u.):         {:.6f}\n".format(scf_energy))
+
+        if emission_ev is not None and total_energy is not None and scf_energy is not None:
+            gap_au  = total_energy - scf_energy
+            gap_ev  = gap_au * 27.2114
+            gap_nm  = 1239.84 / gap_ev if gap_ev > 0 else 0
+            out.write("\n--- Energy Gap (S1-PT minus S0-PT) ---\n")
+            out.write("Gap (a.u.):                      {:.6f}\n".format(gap_au))
+            out.write("Gap (eV):                        {:.4f} eV\n".format(gap_ev))
+            out.write("Gap (nm):                        {:.2f} nm\n".format(gap_nm))
+            out.write("\nNOTE: Emission wavelength from Excited State 1 line is the\n")
+            out.write("direct TD-DFT value and is the one to report. The energy gap\n")
+            out.write("above is a cross-check only.\n")
+
+        out.write("\nNext step: compare PT emission with NF emission (step 04)\n")
+        out.write("to confirm large Stokes shift characteristic of ESIPT.\n")
+
+    print("Step 04b data appended to " + summary_file + " successfully.")
+else:
+    print("ERROR: Output file " + logfile + " not found.")
+EOF

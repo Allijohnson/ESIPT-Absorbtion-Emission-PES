@@ -1,0 +1,135 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16G
+#SBATCH --job-name=05-MN-emit-clr-ESIPT
+
+set -e
+
+sif_file=${SIF_FILES}/g16_centos-7-6.sif
+local_scratch=/scratch/$USER/$SLURM_JOBID
+mkdir -p $local_scratch
+storage_path=${SLURM_SUBMIT_DIR:-$(pwd)}
+
+export BASEFILE=$SLURM_JOB_NAME.$SLURM_JOBID
+storage_path=$SLURM_SUBMIT_DIR
+
+echo "BASEFILE: $BASEFILE"
+echo "storage_path: $storage_path"
+
+cleanup() {
+    echo "Job caught exit signal. Cleaning up split temporary rwf files on \$(hostname)..."
+    rm -rf $local_scratch
+}
+trap cleanup EXIT INT TERM ERR
+
+if [ ! -f $storage_path/04c-MN-S1PT-opt.chk ]; then
+  echo "ERROR: 04c-MN-S1PT-opt.chk not found — did step 4c complete successfully?"
+  exit 1
+fi
+
+cd $storage_path
+
+cat <<@EOF >$BASEFILE.sh
+#!/bin/bash
+export GAUSS_SCRDIR=$local_scratch
+cd $storage_path
+echo "Running emission corrected linear-response solvation..."
+g16 <$BASEFILE.in >$BASEFILE.out 2>$BASEFILE.err
+echo "g16 exit code: \$?"
+@EOF
+
+chmod +x $BASEFILE.sh
+
+cat <<"@EOF" >$BASEFILE.in
+%oldchk=04c-MN-S1PT-opt.chk
+%chk=05-MN-ESIPT.chk
+%nprocshared=16
+%mem=14GB
+# CAM-B3LYP/6-31+G(d,p) TD=(Read,NStates=5,Root=1) 
+  Geom=Check Guess=Read
+  SCRF=(Solvent=isolve,CorrectedLR,NonEquilibrium=Save) NoSymm
+
+MN ESIPT emission: corrected linear-response
+state-specific equilibrium solvation at excited state geometry
+
+0 1
+
+@EOF
+
+echo "Input file written, starting Singularity..."
+echo "Watch progress with: tail -f $storage_path/$BASEFILE.out"
+singularity run -B $SLURM_SUBMIT_DIR,$local_scratch $sif_file ./$BASEFILE.sh
+
+echo "Job complete. Running extraction..."
+
+python3 - <<'EOF'
+import os
+
+basefile = os.environ.get('BASEFILE', '05-MN-emit-clr-ESIPT')
+logfile = basefile + ".out"
+summary_file = "MN-isolve-energy-summary.txt"
+
+clr_trans_ev = None
+clr_total_energy_au = None
+excited_states = {}
+
+if os.path.exists(logfile):
+    with open(logfile, 'r') as f:
+        for line in f:
+            if "corrected transition energy" in line.lower() and "=" in line:
+                try:
+                    clr_trans_ev = float(line.split('=')[1].split()[0])
+                except (IndexError, ValueError):
+                    pass
+            elif "total energy after correction" in line.lower() and "=" in line: 
+                try:
+                    clr_total_energy_au = float(line.split('=')[1].split()[0])
+                except (IndexError, ValueError):
+                    pass
+            elif "Excited State" in line and "Singlet" in line:
+                try:
+                    parts = line.split()
+                    state_num = int(parts[2].rstrip(':'))
+                    ev = float(parts[4])
+                    nm = float(parts[6])
+                    f_val = float(line.split('f=')[1].split()[0])
+                    if state_num <= 4:
+                        excited_states[state_num] = (ev, nm, f_val)
+                except (IndexError, ValueError):
+                    pass
+
+    with open(summary_file, 'a') as out:
+        out.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+        out.write("Step 5a: MN ESIPT PCM CLR (Emission)\n")
+        out.write("Job Name: " + str(basefile) + "\n")
+        out.write("Solvent: isolve (Equilibrium)\n")
+        out.write("Make sure to check f of each excited state\n")
+        out.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+
+        if clr_trans_ev is not None:
+            out.write("Corrected Emission Transition Energy (eV): " + "{:.4f}".format(clr_trans_ev) + " eV\n")
+        else:
+            out.write("Corrected Emission Transition Energy not found\n")
+        if clr_total_energy_au is not None:
+            clr_total_energy_ev = clr_total_energy_au * 27.211386
+            out.write("Total Energy After Correction (a.u.): " + "{:.6f}".format(clr_total_energy_au) + " a.u.\n")
+            out.write("Total Energy After Correction (eV):   " + "{:.4f}".format(clr_total_energy_ev) + " eV\n")
+        else:
+            out.write("Total Energy After Correction (a.u): Not found\n")
+        if excited_states:
+            for state_num in sorted(excited_states.keys()):
+                ev, nm, f_val = excited_states[state_num]
+                out.write("Excited State {}:  {:.4f} eV  {:.2f} nm  f={:.4f}\n".format(
+                    state_num, ev, nm, f_val))
+        else:
+            out.write("Excited state data: Not found (check convergence).\n")
+
+
+    print("Solvation CLR Emission data successfully appended to " + summary_file)
+else:
+    print("Error: Output file " + logfile + " not found")
+EOF
+
+

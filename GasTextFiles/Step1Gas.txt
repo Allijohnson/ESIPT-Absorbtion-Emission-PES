@@ -1,0 +1,113 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=14
+#SBATCH --mem=16G
+#SBATCH --job-name=01-MN-gs-conform
+
+set -e
+
+sif_file=${SIF_FILES}/g16_centos-7-6.sif
+local_scratch=/scratch/$USER/$SLURM_JOBID
+mkdir -p $local_scratch
+storage_path=${SLURM_SUBMIT_DIR:-$(pwd)}
+
+export BASEFILE=$SLURM_JOB_NAME.$SLURM_JOBID
+storage_path=$SLURM_SUBMIT_DIR
+
+echo "BASEFILE: $BASEFILE"
+echo "storage_path: $storage_path"
+
+cleanup() {
+    echo "Job caught exit signal. Cleaning up split temporary rwf files on $(hostname)..."
+    rm -rf $local_scratch
+}
+trap cleanup EXIT INT TERM ERR
+
+cd $storage_path
+
+cat <<@EOF >$BASEFILE.sh
+#!/bin/bash
+export GAUSS_SCRDIR=$local_scratch
+cd $storage_path
+echo "Running ground state Opt+Freq..."
+g16 <$BASEFILE.in >$BASEFILE.out 2>$BASEFILE.err
+echo "g16 exit code: \$?"
+@EOF
+
+chmod +x $BASEFILE.sh
+
+cat <<"@EOF" >$BASEFILE.in
+%chk=01-MN-conform.chk
+%nprocshared=14
+%mem=12GB
+# Opt Freq CAM-B3LYP/6-31+G(d,p) 
+#P GFINPUT POP(FULL)
+
+MN conform ground state
+
+0 1
+Insert Geometry Here
+
+
+@EOF
+
+echo "Input file written, starting Singularity..."
+echo "Watch progress with: tail -f $storage_path/$BASEFILE.out"
+
+singularity run -B $SLURM_SUBMIT_DIR,$local_scratch $sif_file ./$BASEFILE.sh
+
+echo "Job complete. Running extraction..."
+
+# Python segment to process Gaussian output and extract SCF energies and Frequencies
+
+python3 - <<'EOF'
+import os
+
+basefile = os.environ.get('BASEFILE')
+logfile = basefile + ".out"
+summary_file = "MN-conform-gas-energy-summary.txt"
+
+scf_energy = None
+frequencies = []
+
+if os.path.exists(logfile):
+    with open(logfile, 'r') as f:
+        for line in f:
+            if "SCF Done:" in line:
+                try:
+                    scf_energy = float(line.split('=')[1].split()[0])
+                except (IndexError, ValueError):
+                    pass
+            elif "Frequencies --" in line:
+                line_freqs = line.split()[2:]
+                frequencies.extend(line_freqs)
+
+    if scf_energy is not None:
+        energy_ev = scf_energy * 27.211386
+        
+        with open(summary_file, 'w') as out:
+            out.write("Job Name: " + str(basefile) + "\n")
+            out.write("Ground State Energy (Hartree): " + "{:.6f}".format(scf_energy) + "\n")
+            out.write("Ground State Energy (eV):      " + "{:.4f}".format(energy_ev) + "\n")
+            out.write("\n--- Vibrational Frequencies (cm^-1) ---\n")
+            
+            if frequencies:
+                out.write(", ".join(frequencies) + "\n")
+                imag_freqs = [f for f in frequencies if float(f) < 0]
+                if imag_freqs:
+                    out.write("\n Imaginary Frequencies Found " + str(len(imag_freqs)) + " NOT a minimum\n")
+                else:
+                    out.write("\nYay! No imaginary frequencies, this is a minimum\n")
+            else:
+                out.write("No frequencies found.\n")
+                
+        print("Success! Energy and frequencies saved to " + summary_file)
+    else:
+        print("Error: Could not find 'SCF Done:' in the Gaussian output file.")
+else:
+    print("Error: Output file " + logfile + " not found.")
+EOF
+# End of Python Segment
+
+ 

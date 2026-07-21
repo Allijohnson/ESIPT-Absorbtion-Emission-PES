@@ -1,0 +1,24 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+
+set -e
+
+echo "Submitting MN conform ESIPT workflow..."
+
+JOB1=$(sbatch --parsable Step04c-MN-conform-isolve.slurm)
+echo "Step 4c submitted $JOB1"
+
+JOB2=$(sbatch --parsable  --dependency=afterok:$JOB1 Step05ESIPT-MN-conform-isolve.slurm)
+echo "Step 5b submitted: job $JOB2 (depends on $JOB1)"
+
+JOB3=$(sbatch --parsable --dependency=afterok:$JOB2 Step6ESIPT-MN-conform-isolve.slurm)
+echo "Step 6b submitted: job $JOB3 (depends on $JOB2)"
+
+
+echo ""
+echo "All jobs submitted. Monitor with: squeue -u $USER"
+echo ""
+echo "Job Summary:"
+echo "  04c-MN-S1PT-opt.slurm          : $JOB1"
+echo "  05-MN-emit-clr-ESIPT.slurm     : $JOB2"
+echo "  06-MN-gs-neq-clr-ESIPT.slurm   : $JOB3"

@@ -1,0 +1,101 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=14
+#SBATCH --mem=16G
+#SBATCH --job-name=02-MN-td-conform
+
+set -e
+
+sif_file=${SIF_FILES}/g16_centos-7-6.sif
+slocal_scratch=/scratch/$USER/$SLURM_JOBID
+mkdir -p $local_scratch
+storage_path=${SLURM_SUBMIT_DIR:-$(pwd)}
+
+export BASEFILE=$SLURM_JOB_NAME.$SLURM_JOBID
+storage_path=$SLURM_SUBMIT_DIR
+
+echo "BASEFILE: $BASEFILE"
+echo "storage_path: $storage_path"
+
+cleanup() {
+    echo "Job caught exit signal. Cleaning up split temporary rwf files on $(hostname)..."
+    rm -rf $local_scratch
+}
+trap cleanup EXIT INT TERM ERR
+
+if [ ! -f $storage_path/01-MN-conform.chk ]; then
+  echo "ERROR: 01-MN-conform.chk not found - did step 1 complete successfully?"
+  exit 1
+fi
+
+cd $storage_path
+
+
+cat <<@EOF >$BASEFILE.sh
+#!/bin/bash
+export GAUSS_SCRDIR=$local_scratch
+cd $storage_path
+echo "Running TD-DFT vertical excitation (linear response)..."
+g16 <$BASEFILE.in >$BASEFILE.out 2>$BASEFILE.err
+echo "g16 exit code: \$?"
+@EOF
+
+chmod +x $BASEFILE.sh
+
+cat <<"@EOF" >$BASEFILE.in
+%oldchk=01-MN-conform.chk
+%chk=02-MN-conform.chk
+%nprocshared=14
+%mem=12GB
+# CAM-B3LYP/6-31+G(d,p) TD=(NStates=6) Geom=Check Guess=Read
+
+MN conform absorption: linear vertical excited states
+
+0 1
+
+@EOF
+
+echo "Input file written, starting Singularity..."
+echo "Watch progress with: tail -f $storage_path/$BASEFILE.out"
+singularity run -B $SLURM_SUBMIT_DIR,$local_scratch $sif_file ./$BASEFILE.sh
+
+echo "Job complete. Running extraction..."
+
+# Python segment to process Gaussian output and extract SCF energies and Frequencies
+
+python3 - <<'EOF'
+import os
+
+basefile = os.environ.get('BASEFILE')
+logfile = basefile + ".out"
+summary_file = "MN-conform-gas-energy-summary.txt"
+
+excitation_ev = None
+wavelength_nm = None
+
+if os.path.exists(logfile):
+    with open(logfile, 'r') as f:
+        for line in f:
+            if "Excited State   1:" in line:
+                try:
+                    parts = line.split()
+                    excitation_ev = float(parts[4])
+                    wavelength_nm = float(parts[6])
+                except (IndexError, ValueError):
+                    pass
+
+    with open(summary_file, 'a') as out:
+        if excitation_ev is not None:
+            out.write("\n==============================\n")
+            out.write("Step 2: Vertical Excitation Energies of MN\n")
+            out.write("Excitation Energy (eV):          " + "{:.4f}".format(excitation_ev) + " eV\n")
+            out.write("Excitation Wavelength (nm):      " + "{:.2f}".format(wavelength_nm) + " nm\n")
+            print("Success! Excitation data saved to " + summary_file)
+        else:
+            out.write("\n==============================\n")
+            out.write("No 'Excited State   1:' data found. Check your TD keyword.\n")
+            print("Warning: No excitation data found.")
+else:
+    print("Error: Output file " + logfile + " not found.")
+EOF

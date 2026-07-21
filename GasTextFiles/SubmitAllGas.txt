@@ -1,0 +1,30 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+
+set -e
+
+echo "Submitting MN conform photochemistry workflow..."
+
+
+JOB1=$(sbatch --parsable 01-MN-gs-gas-conform.slurm)
+echo "Step 1 submitted: job $JOB1"
+
+JOB2=$(sbatch --parsable --dependency=afterok:$JOB1 02-MN-td-gas-conform.slurm)
+echo "Step 2 submitted: job $JOB2 (depends on $JOB1)"
+
+JOB2b=$(sbatch --parsable --dependency=afterok:$JOB2 02b-MN-ESIPT-scan.slurm)
+echo "Step 2b submitted: job $JOB2b (depends on $JOB2)"
+
+JOB4=$(sbatch --parsable --dependency=afterok:$JOB2 04-MN-es-opt-gas-conform.slurm)
+echo "Step 4 submitted: job $JOB4 (depends on $JOB2)"
+
+
+echo ""
+echo "All jobs submitted. Monitor with: squeue -u $USER"
+echo ""
+echo "Job Summary"
+echo "  01-MN-gs-conform         : $JOB1"
+echo "  02-MN-td-conform         : $JOB2"
+echo "  02b-MN-ESIPT-scan        : $JOB2b"   
+echo "  04-MN-es-opt-conform     : $JOB4"
+

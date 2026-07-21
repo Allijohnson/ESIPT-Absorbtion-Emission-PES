@@ -1,0 +1,156 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+#SBATCH --job-name=01-MN-gs-conform
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16G
+
+set -e
+
+sif_file=${SIF_FILES}/g16_centos-7-6.sif
+
+local_scratch=/scratch/$USER/$SLURM_JOBID
+mkdir -p $local_scratch
+storage_path=${SLURM_SUBMIT_DIR:-$(pwd)}
+
+export BASEFILE=$SLURM_JOB_NAME.$SLURM_JOBID
+storage_path=$SLURM_SUBMIT_DIR
+
+echo "BASEFILE: $BASEFILE"
+echo "storage_path: $storage_path"
+
+cleanup() {
+    echo "Job caught exit signal. Cleaning up split temporary rwf files on $(hostname)..."
+    rm -rf $local_scratch
+}
+trap cleanup EXIT INT TERM ERR
+
+cd $storage_path
+
+cat <<@EOF >$BASEFILE.sh
+#!/bin/bash
+export GAUSS_SCRDIR=$local_scratch
+cd $storage_path
+echo "Gaussian scratch directory:"
+echo \$GAUSS_SCRDIR
+echo "Running ground state Opt+Freq..."
+g16 <$BASEFILE.in >$BASEFILE.out 2>$BASEFILE.err
+echo "g16 exit code: \$?"
+@EOF
+
+chmod +x $BASEFILE.sh
+
+cat <<"@EOF" >$BASEFILE.in
+%chk=01-MN-conform.chk
+%nprocshared=16
+%mem=14GB
+# Opt Freq CAM-B3LYP/6-31+G(d,p) SCRF=(Solvent=isolve)
+
+MN conform ground state
+
+0 1
+Br    -0.0004410000   -2.7784190000   -0.6165970000
+C      0.0000050000   -0.9731340000   -0.0797990000
+C      1.2021100000   -0.2725560000    0.0578810000
+C      4.8214980000    1.6467590000   -0.7210570000
+C      1.2187300000    1.1253520000    0.1508470000
+C      2.5042750000    1.8428900000    0.0269370000
+C      0.0001270000    1.8702250000    0.1826690000
+H      5.1094110000    1.0163310000   -1.5668250000
+C     -1.2185480000    1.1254540000    0.1508690000
+C     -2.5041270000    1.8429620000    0.0268270000
+C     -1.2019880000   -0.2724210000    0.0580560000
+C     -2.4863770000   -0.9995850000    0.3128220000
+O     -2.5174710000   -2.1335140000    0.7607310000
+O     -2.5902280000    3.0716780000   -0.0907170000
+N     -3.6500690000   -0.2905010000    0.1355320000
+N     -3.6350030000    1.0880790000   -0.0898090000
+C     -4.8607820000   -0.7890370000    0.7820410000
+H     -5.7182980000   -0.6995250000    0.1147660000
+H     -4.6899650000   -1.8369540000    1.0128720000
+H     -5.0520670000   -0.2333130000    1.7062360000
+C     -4.8212090000    1.6470250000   -0.7214840000
+H     -5.1101920000    1.0157870000   -1.5662630000
+H     -5.6544250000    1.7264770000   -0.0193460000
+H     -4.5619540000    2.6445710000   -1.0679840000
+N      3.6352470000    1.0880730000   -0.0892170000
+N      3.6501380000   -0.2904870000    0.1359990000
+C      4.8609830000   -0.7893450000    0.7819760000
+C      2.4865320000   -0.9999320000    0.3121020000
+O      2.5177060000   -2.1344190000    0.7586290000
+H      4.5628320000    2.6449550000   -1.0661070000
+O      2.5903360000    3.0716100000   -0.0907240000
+H      5.7177980000   -0.7030020000    0.1133280000
+H      5.0543760000   -0.2314780000    1.7044110000
+H      4.6887540000   -1.8364070000    1.0156870000
+H      5.6552360000    1.7245610000   -0.0193740000
+N      0.0001740000    3.2091810000    0.2364630000
+H      0.8955490000    3.6756730000    0.1445480000
+H     -0.8951710000    3.6757600000    0.1447010000
+
+
+
+@EOF
+
+echo "Input file written, starting Singularity..."
+echo "Watch progress with: tail -f $storage_path/$BASEFILE.out"
+
+singularity run -B $SLURM_SUBMIT_DIR,$local_scratch $sif_file ./$BASEFILE.sh
+
+echo "Job complete. Running extraction..."
+
+
+# Python segment to process Gaussian output and extract SCF energies and Frequencies
+
+python3 - <<'EOF'
+import os
+
+basefile = os.environ.get('BASEFILE')
+logfile = basefile + ".out"
+summary_file = "MN-isolve-energy-summary.txt"
+
+scf_energy = None
+frequencies = []
+
+if os.path.exists(logfile):
+    with open(logfile, 'r') as f:
+        for line in f:
+            if "SCF Done:" in line:
+                try:
+                    scf_energy = float(line.split('=')[1].split()[0])
+                except (IndexError, ValueError):
+                    pass
+            elif "Frequencies --" in line:
+                line_freqs = line.split()[2:]
+                frequencies.extend(line_freqs)
+    if scf_energy is not None:
+        energy_ev = scf_energy * 27.211386
+        
+        with open(summary_file, 'w') as out:
+            out.write("Job Name: " + str(basefile) + "\n")
+            out.write("Energy, Frequency, Emission, and Absorption Summary of MN conform in: isolve\n")
+            out.write("Ground State Energy (Hartree): " + "{:.6f}".format(scf_energy) + "\n")
+            out.write("Ground State Energy (eV):      " + "{:.4f}".format(energy_ev) + "\n")
+            out.write("\n--- Vibrational Frequencies (cm^-1) ---\n")
+            
+            if frequencies:
+                out.write(", ".join(frequencies) + "\n")
+                imag_freqs = [f for f in frequencies if float(f) < 0]
+                if imag_freqs:
+                    out.write("\n Imaginary Frequencies Found " + str(len(imag_freqs)) + " NOT a minimum\n")
+                else:
+                    out.write("\nYay! No imaginary frequencies, this is a minimum\n")
+            else:
+                out.write("No frequencies found.\n")
+                
+        print("Success! Energy and frequencies saved to " + summary_file)
+    else:
+        print("Error: Could not find 'SCF Done:' in the Gaussian output file.")
+else:
+    print("Error: Output file " + logfile + " not found.")
+EOF
+# End of Python Segment
+
+
+

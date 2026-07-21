@@ -1,0 +1,146 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16G
+#SBATCH --job-name=02c-MN-S1PT-opt-conform
+
+set -e
+
+sif_file=${SIF_FILES}/g16_centos-7-6.sif
+local_scratch=/scratch/$USER/$SLURM_JOBID
+mkdir -p $local_scratch
+storage_path=${SLURM_SUBMIT_DIR:-$(pwd)}
+
+export BASEFILE=$SLURM_JOB_NAME.$SLURM_JOBID
+storage_path=$SLURM_SUBMIT_DIR
+
+echo "BASEFILE: $BASEFILE"
+echo "storage_path: $local_scratch"
+
+cleanup() {
+    e echo "Job caught exit signal. Cleaning up split temporary rwf files on $(hostname)..."
+    rm -rf $local_scratch
+}
+trap cleanup EXIT INT TERM ERR
+
+cd $storage_path
+
+
+cat <<@EOF >$BASEFILE.sh
+#!/bin/bash
+export GAUSS_SCRDIR=$storage_path
+cd $storage_path
+echo "Running gas phase S1-PT tautomer optimization + freq..."
+g16 <$BASEFILE.in >$BASEFILE.out 2>$BASEFILE.err
+echo "g16 exit code: \$?"
+@EOF
+
+chmod +x $BASEFILE.sh
+
+cat <<"@EOF" >$BASEFILE.in
+%chk=02c-MN-S1PT-opt-conform.chk
+%nprocshared=16
+%mem=14GB
+# CAM-B3LYP/6-31+G(d,p) TD=(NStates=4,Root=1)
+  Opt=(CalcFC,MaxCycles=100,MaxStep=10) Freq NoSymm
+
+MN conform gas phase: S1 tautomer (PT form) geometry optimization
+Starting from Lowest energy step of ESIPT scan (02b)
+
+0 1
+
+insert geometry from lowest energy step
+
+@EOF
+
+echo "Input file written, starting Singularity..."
+echo "Watch progress with: tail -f $storage_path/$BASEFILE.out"
+singularity run -B $SLURM_SUBMIT_DIR,$local_scratch $sif_file ./$BASEFILE.sh
+
+echo "Job complete. Running extraction..."
+
+# Python segment to confirm minimum and extract S1-PT energy
+python3 - <<'EOF'
+import os
+
+basefile     = os.environ.get('BASEFILE')
+logfile      = basefile + ".out"
+summary_file = "MN-conform-gas-energy-summary.txt"
+
+opt_converged   = False
+emission_ev     = None
+wavelength_nm   = None
+total_energy    = None
+frequencies     = []
+imag_freqs      = []
+
+if os.path.exists(logfile):
+    with open(logfile, 'r') as f:
+        lines = f.readlines()
+
+    # Step 1: Confirm convergence state
+    for line in lines:
+        if "Optimization completed" in line:
+            opt_converged = True
+
+    # Step 2: Extract numbers sequentially without iterative overwriting
+    for line in lines:
+        if "Total Energy, E(TD-HF/TD-DFT)" in line and "=" in line:
+            try:
+                total_energy = float(line.split("=")[1].strip().split()[0])
+            except (IndexError, ValueError):
+                pass
+        if "Excited State   1:" in line:
+            try:
+                parts         = line.split()
+                emission_ev   = float(parts[4])
+                wavelength_nm = float(parts[6])
+            except (IndexError, ValueError):
+                pass
+
+        if "Frequencies --" in line:
+            freqs = line.split()[2:]
+            frequencies.extend(freqs)
+            for f_val in freqs:
+                try:
+                    if float(f_val) < 0:
+                        imag_freqs.append(f_val)
+                except ValueError:
+                    pass
+
+    with open(summary_file, 'a') as out:
+        out.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+        out.write("Step 02c: Gas Phase S1-PT Tautomer Opt + Freq\n")
+        out.write("Job Name: " + str(basefile) + "\n")
+        out.write("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+
+        out.write("Optimization converged: " + ("YES" if opt_converged else "NO — check geometry") + "\n")
+
+        if total_energy is not None:
+            out.write("S1-PT Total Energy (a.u.):       {:.6f}\n".format(total_energy))
+        else:
+            out.write("S1-PT Total Energy:              Not found.\n")
+
+        if emission_ev is not None:
+            out.write("S1 Energy (eV):                  {:.4f} eV\n".format(emission_ev))
+            out.write("S1 Wavelength (nm):              {:.2f} nm\n".format(wavelength_nm))
+        else:
+            out.write("S1 Energy:                       Not found.\n")
+
+        out.write("\n--- Vibrational Frequencies (cm^-1) ---\n")
+        if frequencies:
+            out.write(", ".join(frequencies) + "\n")
+            if imag_freqs:
+                out.write("\nWARNING: {} imaginary frequency/frequencies found: {}\n".format(
+                    len(imag_freqs), ", ".join(imag_freqs)))
+                out.write("NOT a true minimum — follow imaginary mode and reoptimize.\n")
+            else:
+                out.write("\nNo imaginary frequencies. Confirmed true S1-PT minimum.\n")
+        else:
+            out.write("No frequencies found.\n")
+
+    print("Step 2c data appended to " + summary_file + " successfully.")
+else:
+    print("ERROR: Output file " + logfile + " not found.")
+EOF

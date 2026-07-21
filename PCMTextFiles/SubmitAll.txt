@@ -1,0 +1,46 @@
+#!/bin/bash
+#SBATCH --partition=mu3c
+
+set -e
+
+echo "Submitting MN conform photochemistry workflow..."
+
+JOB1=$(sbatch --parsable Step1-MN-conform-isolve.slurm)
+echo "Step 1 submitted: job $JOB1"
+
+JOB2=$(sbatch --parsable --dependency=afterok:$JOB1 Step2-MN-conform-isolve.slurm)
+echo "Step 2 submitted: job $JOB2 (depends on $JOB1)"
+
+JOB3=$(sbatch --parsable --dependency=afterok:$JOB1 Step3-MN-conform-isolve.slurm)
+echo "Step 3 submitted: job $JOB3 (depends on $JOB1)"
+
+JOB4=$(sbatch --parsable --dependency=afterok:$JOB2 Step4-MN-conform-isolve.slurm)
+echo "Step 4 submitted: job $JOB4 (depends on $JOB2)"
+
+JOB4b=$(sbatch --parsable --dependency=afterok:$JOB4 Step04b-MN-conform-isolve.slurm)
+echo "Step 4b submitted: job $JOB4b (depends on $JOB4)"
+
+
+JOB5=$(sbatch --parsable --dependency=afterok:$JOB4 Step5-MN-conform-isolve.slurm)
+echo "Step 5 submitted: job $JOB5 (depends on $JOB4)"
+
+JOB6=$(sbatch --parsable --dependency=afterok:$JOB5 Step6-MN-conform-isolve.slurm)
+echo "Step 6 submitted: job $JOB6 (depends on $JOB5)"
+
+
+echo ""
+echo "All jobs submitted. Monitor with: squeue -u $USER"
+echo ""
+echo "Job summary:"
+echo "  01-MN-gs-conform         : $JOB1"
+echo "  02-MN-td-conform         : $JOB2"
+echo "  03-MN-clr-conform        : $JOB3"
+echo "  04-MN-es-opt-conform     : $JOB4"
+echo "  04b-MN-ESIPT-scan        : $JOB4b"
+echo "  05-MN-emit-clr-conform   : $JOB5"
+echo "  06-MN-gs-neq-clr-conform : $JOB6"
+
+
+
+
+
