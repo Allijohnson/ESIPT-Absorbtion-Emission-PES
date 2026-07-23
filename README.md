@@ -36,4 +36,35 @@ python3 extract_pes.py ~/path/to/output/file/<filename>.out OHBrimhy.xyz
 ## Cleaning Random Output Files
 There is a file with a bunch of methods that can clean an output file and extract data if, for some reason, the Python segment in the submission file failed. These are easiest to run in VS Code, PyCharm, etc. directly. Just change the file paths to go to the output file of interest and put in the solvent if using PCM, using the main method. The output file just has to be the same type of calculation as the cleaning method to work, i.e., ground-state optimization/frequency calc goes with printStep1().
 
+## Acknowledgements:
+Cao lab, Macalester college chemistry department, MU3C, NSF RUI Grant #2453568
 
+## References: 
+(1)
+Mennucci, B.; Cancès, E.; Tomasi, J. Evaluation of Solvent Effects in Isotropic and Anisotropic Dielectrics and in Ionic Solutions with a Unified Integral Equation Method: Theoretical Bases, Computational Implementation, and Numerical Applications. J. Phys. Chem. B 1997, 101 (49), 10506–10517. https://doi.org/10.1021/jp971959k.
+(2)
+Citation | Gaussian.com. https://gaussian.com/citation/ (accessed 2026-06-14).
+(3)
+Accurate description of excited state intramolecular proton transfer that involves zwitterionic state using optimally tuned range‐separated time‐dependent density functional theory - Zhou - 2018 - International Journal of Quantum Chemistry - Wiley Online Library. https://onlinelibrary.wiley.com/doi/10.1002/qua.25618 (accessed 2026-07-23).
+(4)
+Wilbraham, L.; Savarese, M.; Rega, N.; Adamo, C.; Ciofini, I. Describing Excited State Intramolecular Proton Transfer in Dual Emissive Systems: A Density Functional Theory Based Analysis. J. Phys. Chem. B 2015, 119 (6), 2459–2466. https://doi.org/10.1021/jp507425x.
+(5)
+Wei, J.; Wu, Y.; Pu, R.; Shi, L.; Jiang, J.; Du, J.; Guo, Z.; Huang, Y.; Liu, W. Tracking Ultrafast Structural Dynamics in a Dual-Emission Anti-Kasha-Active Fluorophore Using Femtosecond Stimulated Raman Spectroscopy. J. Phys. Chem. Lett. 2021, 12 (18), 4466–4473. https://doi.org/10.1021/acs.jpclett.1c00202.
+(6)
+Wang, Y.; Hu, M.; Yue, Q.; Xiaoqing, F.; Zhao, Y. Insights into ESIPT-Induced Multicolor Fluorescence Emission in 2-(2′-Hydroxy-5′-Bromo)Phenylbenzimidazole: A Spectroscopic and TDDFT Study. RSC Adv 14 (53), 39759–39768. https://doi.org/10.1039/d4ra06147k.
+(7)
+Paudel, S.; Nandhikonda, P.; Heagy, M. D. A Comparative Study into Two Dual Fluorescent Mechanisms via Positional Isomers of N-Hydroxyarene-1,8-Naphthalimides. J Fluoresc 2009, 19 (4), 681–691. https://doi.org/10.1007/s10895-009-0462-2.
+(8)
+Padalkar, V. S.; Seki, S. Excited-State Intramolecular Proton-Transfer (ESIPT)-Inspired Solid State Emitters. Chem. Soc. Rev. 2016, 45 (1), 169–202. https://doi.org/10.1039/c5cs00543d.
+(9)
+Jankowska, J.; Sobolewski, A. L. Modern Theoretical Approaches to Modeling the Excited-State Intramolecular Proton Transfer: An Overview. Molecules 2021, 26 (17), 5140. https://doi.org/10.3390/molecules26175140.
+(10)
+Jakubikova, E.; Rappé, A. K.; Bernstein, E. R. Exploration of Basis Set Issues for Calculation of Intermolecular Interactions. J. Phys. Chem. A 2006, 110 (31), 9529–9541. https://doi.org/10.1021/jp0680239.
+(11)
+Fdez. Galván, I.; Martín, M. E.; Muñoz-Losa, A.; Aguilar, M. A. Dual Fluorescence of Fluorazene in Solution: A Computational Study. J. Chem. Theory Comput. 2011, 7 (11), 3694–3701. https://doi.org/10.1021/ct2005227.
+(12)
+Draženović, J.; Rožić, T.; Došlić, N.; Basarić, N. Excited State Intramolecular Proton Transfer (ESIPT) from -NH2 to the Carbon Atom of a Naphthyl Ring. J. Org. Chem. 2022, 87 (14), 9148–9156. https://doi.org/10.1021/acs.joc.2c00818.
+(13)
+Cao, Y.; Yu, X.; Sun, C.; Cui, J. Theoretical Investigation on the ESIPT Process and Detection Mechanism for Dual-Proton Type Fluorescent Probe. Int J Mol Sci 2022, 23 (4), 2132. https://doi.org/10.3390/ijms23042132.
+(14)
+Bi, X.; Liu, B.; McDonald, L.; Pang, Y. Excited-State Intramolecular Proton Transfer (ESIPT) of Fluorescent Flavonoid Dyes: A Close Look by Low Temperature Fluorescence. J. Phys. Chem. B 2017, 121 (19), 4981–4986. https://doi.org/10.1021/acs.jpcb.7b01885.
