@@ -1,5 +1,8 @@
 # ESIPT-Absorbtion-Emission-PES
-Repo with a variety of scripts to aid in an investigative study of potential ESIPT molecules: Generate submission files,  summarize gaussian output files, make graph of PES and .xyz file to visualize proton transfer. Will work best if you copy it.
+Repo with a variety of scripts to aid in an investigative study of potential ESIPT molecules: Generate submission files,  summarize gaussian output files, make graph of PES and .xyz file to visualize proton transfer. Will work best if you copy it. It is also convienient to change the base files to fit the specific parameters you might want (i.e. change the basis set, functional, specific printing parameters, CPU/mem allocations, job naming scheme). For SBATCH specifications documentation: https://slurm.schedmd.com/sbatch.html
+
+# List of packages needed:
+os, re, sys, argparse, matplotlib.pyplot, matplotlib.ticker, cclib
 
 # Using files:
 I am working on making these a little more user-friendly; most of the scripts were written on an as-needed basis without much thought given to who else might be using the files in the future :/ oops. As a result, it is a little bit clunky to use, but it allows you to organize your files however you would like.
