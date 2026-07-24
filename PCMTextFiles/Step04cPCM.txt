@@ -44,7 +44,7 @@ echo "g16 exit code: \$?"
 chmod +x $BASEFILE.sh
 
 cat <<@EOF >$BASEFILE.in
-%oldchk=%oldchk=04b-MN-ESIPT-scan.chk
+%oldchk=04b-MN-ESIPT-scan.chk
 %chk=04c-MN-S1PT-opt.chk
 %nprocshared=16
 %mem=14GB
@@ -142,7 +142,7 @@ if os.path.exists(logfile):
             for f in frequencies:
                 try:
                     if float(f) <0:
-                    imag_freqs.append(f)
+                        imag_freqs.append(f)
                 except ValueError:
                     pass
             if imag_freqs:
