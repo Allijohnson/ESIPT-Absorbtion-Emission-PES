@@ -126,7 +126,7 @@ with open(logfile) as f:
             if line.strip() == "":
                 in_opt_block = False
 
-    with open(summary_file, 'a') as out:
+        with open(summary_file, 'a') as out:
         out.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
         out.write("Step 04b: MN in isolve S1 ESIPT PES Scan\n")
         out.write("Job Name: " + str(basefile) + "\n")
@@ -135,22 +135,21 @@ with open(logfile) as f:
         out.write("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
 
         out.write("\n--- Scan Energies (TD-DFT total, a.u.) ---\n")
-    if scan_energies:
-        e0 = scan_energies[0]
-        for idx, (e, bl) in enumerate(zip(scan_energies, bond_lengths)):
-            rel = (e - e0) * 627.509
-            s1  = f"{excited_states[idx][0]:.4f} eV / {excited_states[idx][1]:.2f} nm  f={excited_states[idx][2]:.4f}" \
-                  if excited_states[idx] else "N/A"
-            out.write(f"  Step {idx+1:2d}  O-H = {bl:.5f} A"
+    	if scan_energies:
+            e0 = scan_energies[0]
+            for idx, (e, bl) in enumerate(zip(scan_energies, bond_lengths)):
+                rel = (e - e0) * 627.509
+                s1  = f"{excited_states[idx][0]:.4f} eV / {excited_states[idx][1]:.2f} nm  f={excited_states[idx][2]:.4f}" \
+                    if excited_states[idx] else "N/A"
+                out.write(f"  Step {idx+1:2d}  O-H = {bl:.5f} A"
                       f"  E = {e:.8f} a.u.  ({rel:+.2f} kcal/mol)  S1: {s1}\n")
-    else:
-        out.write("  No converged scan points found — check convergence.\n")
+        else:
+            out.write("  No converged scan points found — check convergence.\n")
 
-    out.write("\n--- Root Flipping Check ---\n")
-    out.write("Review oscillator strengths (f=) for each Excited State 1 entry above.\n")
-    out.write("A sudden change in f or state character indicates root flipping.\n")
+            out.write("\n--- Root Flipping Check ---\n")
+            out.write("Review oscillator strengths (f=) for each Excited State 1 entry above.\n")
+            out.write("A sudden change in f or state character indicates root flipping.\n")
 
     print("Step 04b data appended to " + summary_file + " successfully.")
-else:
-    print("ERROR: Output file " + logfile + " not found.")
+
 EOF
